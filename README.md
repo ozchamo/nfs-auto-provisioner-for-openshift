@@ -1,7 +1,7 @@
 # nfs-auto-provisioner-for-openshift
 ## What does nfs-auto-provisioner-for-openshift do?
 It does just that! This script enables the following under OpenShift:
-1) it sets up your OpenShift cluster to provide NFS provisioning with subdirectories
+1) it sets up your OpenShift cluster to provide NFS provisioning with subdirectories using an externally available NFS service (that you provide)
 2) it sets up a storage class for consumption
 3) it provides a mechanism to test the logic above
 
