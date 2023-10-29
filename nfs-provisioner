@@ -1,0 +1,296 @@
+#!/bin/bash
+
+# SOURCE DOC:
+# https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner#manually
+
+# Config - user replaceable vars - adjust to suit your env
+NFS_SERVER=192.168.10.1
+NFS_PATH=/mnt/nfsworkershare
+NAMESPACE=nfs-provisioner # the script makes this default, so this is not necessarily used
+SETASDEFAULTCLASS=Y # Change to N so that this is not set as a default storage class. 
+
+# Reference vars
+NFSSETUPDIR=nfs-provisioner # This is created to build the ancillary elements to the script
+NFS_STORAGE_CLASS_NAME=nfs-client # the test pod uses this name, so only change if not using it!!
+DEPLOYMENT_FILE=${NFSSETUPDIR}/deployment.yaml
+RBAC_FILE=${NFSSETUPDIR}/rbac.yaml
+CLASS_FILE=${NFSSETUPDIR}/class.yaml
+
+progress-nfs-setup()
+{
+
+	# First lets test the path!
+	showmount -e ${NFS_SERVER} 2>/dev/null | grep ${NFS_PATH} >/dev/null 
+	if [ $? -eq 0 ]
+	then
+		echo
+		echo "Path ${NFS_SERVER}:/${NFS_PATH} is available at the NFS server."
+		echo "NOTE: This script does not check for correct permissions."
+		echo
+	else
+		echo "ERROR:Path ${NFS_SERVER}:/${NFS_PATH} does not appear to be exported."
+		echo "           Check it and run again."
+		exit
+	fi
+
+	mkdir -p ${NFSSETUPDIR}
+	
+	# Now we set up the deployment.yaml file
+
+	cat <<NFSRBACEND > ${RBAC_FILE}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-client-provisioner
+  namespace: ${NAMESPACE}
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-client-provisioner-runner
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: run-nfs-client-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: ${NAMESPACE}
+roleRef:
+  kind: ClusterRole
+  name: nfs-client-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: ${NAMESPACE}
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-nfs-client-provisioner
+  namespace: ${NAMESPACE}
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: ${NAMESPACE}
+roleRef:
+  kind: Role
+  name: leader-locking-nfs-client-provisioner
+  apiGroup: rbac.authorization.k8s.io
+NFSRBACEND
+
+	cat <<NFSDEPLOYEND > ${DEPLOYMENT_FILE}
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: nfs-client-provisioner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner
+    spec:
+      serviceAccountName: nfs-client-provisioner
+      containers:
+        - name: nfs-client-provisioner
+          image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          volumeMounts:
+            - name: nfs-client-root
+              mountPath: /persistentvolumes
+          env:
+            - name: PROVISIONER_NAME
+              value: k8s-sigs.io/nfs-subdir-external-provisioner
+            - name: NFS_SERVER
+              value: ${NFS_SERVER}
+            - name: NFS_PATH
+              value: ${NFS_PATH}
+      volumes:
+        - name: nfs-client-root
+          nfs:
+            server: ${NFS_SERVER}
+            path: ${NFS_PATH}
+NFSDEPLOYEND
+
+	cat <<NFSCLASSEND > ${CLASS_FILE}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ${NFS_STORAGE_CLASS_NAME}
+provisioner: k8s-sigs.io/nfs-subdir-external-provisioner # or choose another name, must match deployment's env PROVISIONER_NAME'
+parameters:
+  pathPattern: "\${.PVC.namespace}/\${.PVC.annotations.nfs.io/storage-path}" # waits for nfs.io/storage-path annotation, if not specified will accept as empty string.
+  onDelete: delete
+NFSCLASSEND
+
+	oc new-project ${NAMESPACE} >/dev/null 2>&1
+	oc project ${NAMESPACE}
+	oc create -f ${RBAC_FILE}
+	oc adm policy add-scc-to-user hostmount-anyuid system:serviceaccount:$NAMESPACE:nfs-client-provisioner
+	oc apply -f ${DEPLOYMENT_FILE}
+	oc apply -f ${CLASS_FILE}
+	[ "${SETASDEFAULTCLASS}" == Y ] && oc patch storageclass ${NFS_STORAGE_CLASS_NAME} -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
+
+}
+
+rollback-nfs-setup() {
+	oc project ${NAMESPACE}
+	oc delete serviceaccount nfs-client-provisioner
+	oc delete deployment nfs-client-provisioner
+	oc delete sc ${NFS_STORAGE_CLASS_NAME}	
+	oc delete clusterrole nfs-client-provisioner-runner
+	oc delete clusterrolebinding run-nfs-client-provisioner
+	oc delete role leader-locking-nfs-client-provisioner
+	oc delete rolebinding leader-locking-nfs-client-provisioner
+	rm -rf nfs-setup
+}
+
+print-usage() {
+
+	echo "USAGE: $(basename $0) <progress|rollback|test <progress|rollback> <testnamespace>"
+	echo "       This script simplifies the configuration of a NFS provisioner and storage class"
+	echo "       - progress: will create all required assets in dir ${NFSSETUPDIR} and proceed to configure"
+	echo "       - rollback: will undo everything!"
+	exit
+}
+
+if [ "$1" == "progress" ]
+then
+	progress-nfs-setup
+elif [ "$1" == "rollback" ]
+then
+	rollback-nfs-setup
+elif [ "$1" == "test" ]
+then
+	if [ -z "$3" ]
+	then
+		echo "Using [${NAMESPACE}] as namespace for tests"
+	else
+		NAMESPACE=$3
+	fi
+
+	if [ "$2" == progress ]
+	then
+		cat << NFSTESTCLAIMEND > ${NFSSETUPDIR}/test-claim.yaml
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: test-claim
+spec:
+  storageClassName: nfs-client
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Mi
+NFSTESTCLAIMEND
+
+		cat << NFSTESTPODEND > ${NFSSETUPDIR}/test-pod.yaml
+kind: Pod
+apiVersion: v1
+metadata:
+  name: test-pod
+spec:
+  containers:
+  - name: test-pod
+    image: busybox:stable
+    command:
+      - "/bin/sh"
+    args:
+      - "-c"
+      - "touch /mnt/SUCCESS && exit 0 || exit 1"
+    volumeMounts:
+      - name: nfs-pvc
+        mountPath: "/mnt"
+  restartPolicy: "Never"
+  volumes:
+    - name: nfs-pvc
+      persistentVolumeClaim:
+        claimName: test-claim
+NFSTESTPODEND
+
+		[ "${NAMESPACE}" != "default" ] && oc new-project ${NAMESPACE}
+		oc apply -f ${NFSSETUPDIR}/test-claim.yaml 
+		oc apply -f ${NFSSETUPDIR}/test-pod.yaml
+
+		echo
+		echo "NFS autoprovisioner test is now running - check the following:"
+		echo "- oc get pods (you should see test-claim-pod)"
+		echo "- oc get pv"
+		echo "- oc get pvc (test-claim should be bound to pv"
+		echo "- file SUCCESS created in $NFS_SERVER:${NFS_PATH}/${NAMESPACE}"
+		echo
+
+	elif [ "$2" == rollback ]
+	then
+		if [ -z "$3" ]
+		then
+			echo "Using [${NAMESPACE}] as namespace for tests"
+		else
+			NAMESPACE=$3
+		fi
+
+		cat << NFSTESTPODDELEND > ${NFSSETUPDIR}/test-delete-pod.yaml
+kind: Pod
+apiVersion: v1
+metadata:
+  name: test-delete-pod
+spec:
+  containers:
+  - name: test-delete-pod
+    image: busybox:stable
+    command:
+      - "/bin/sh"
+    args:
+      - "-c"
+      - "rm /mnt/SUCCESS && exit 0 || exit 1"
+    volumeMounts:
+      - name: nfs-pvc
+        mountPath: "/mnt"
+  restartPolicy: "Never"
+  volumes:
+    - name: nfs-pvc
+      persistentVolumeClaim:
+        claimName: test-claim
+NFSTESTPODDELEND
+
+		echo "NOTE: Project [${NAMESPACE}] will not be automatically deleted."
+		oc apply -f ${NFSSETUPDIR}/test-delete-pod.yaml
+		oc delete pod test-pod
+		oc delete pod test-delete-pod
+		oc delete pvc test-claim
+	else
+		print-usage
+	fi
+else
+	print-usage
+fi
