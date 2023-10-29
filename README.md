@@ -7,12 +7,10 @@ It does just that! This script enables the following under OpenShift:
 
 And - it provides mechanisms to progress and rollback both the autoprovisioner AND the test
 
-Before running, be sure to, at a minimum, configure the top two variables:
+Become a cluster adming and then, before running, be sure to at a minimum, configure the top two variables:
 
 NFS_SERVER=<your-nfs-server-hostname-or-ip-address   
 NFS_PATH=/your/nfs/server/shared/path   
 
-And, of course, you need to be an admin user.
-
-This is simply a bash automation of the process above, based on:
+This is simply a bash automation of the process above, based on:  
 https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner#manually
