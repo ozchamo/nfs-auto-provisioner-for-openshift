@@ -4,13 +4,13 @@
 # https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner#manually
 
 # Config - user replaceable vars - adjust to suit your env
-NFS_SERVER=192.168.10.1
+NFS_SERVER=192.168.100.2
 NFS_PATH=/mnt/nfsworkershare
 NAMESPACE=nfs-provisioner # the script makes this default, so this is not necessarily used
 SETASDEFAULTCLASS=Y # Change to N so that this is not set as a default storage class. 
 
 # Reference vars
-NFSSETUPDIR=nfs-provisioner # This is created to build the ancillary elements to the script
+NFSSETUPDIR=nfs-provisioner-setup-dir # This is created to build the ancillary elements to the script
 NFS_STORAGE_CLASS_NAME=nfs-client # the test pod uses this name, so only change if not using it!!
 DEPLOYMENT_FILE=${NFSSETUPDIR}/deployment.yaml
 RBAC_FILE=${NFSSETUPDIR}/rbac.yaml
@@ -19,8 +19,21 @@ CLASS_FILE=${NFSSETUPDIR}/class.yaml
 progress-nfs-setup()
 {
 
+	if [ $NFS_SERVER == "1.1.1.1" ]
+	then
+		echo "You must enter the hostname or IP address of your NFS server!"
+		exit
+	fi
+
+	if [ $NFS_PATH == "/my/nfs/path" ]
+	then
+		echo "You must enter the path available on your NFS server!"
+		exit
+
+	fi
+
 	# First lets test the path!
-	showmount -e ${NFS_SERVER} 2>/dev/null | grep ${NFS_PATH} >/dev/null 
+	showmount -e ${NFS_SERVER} 2>/dev/null | grep "${NFS_PATH} " >/dev/null 
 	if [ $? -eq 0 ]
 	then
 		echo
@@ -28,8 +41,8 @@ progress-nfs-setup()
 		echo "NOTE: This script does not check for correct permissions."
 		echo
 	else
-		echo "ERROR:Path ${NFS_SERVER}:/${NFS_PATH} does not appear to be exported."
-		echo "           Check it and run again."
+		echo "ERROR: Path ${NFS_SERVER}:/${NFS_PATH} does not appear to be exported."
+		echo "       Check it and run again."
 		exit
 	fi
 
@@ -159,7 +172,6 @@ NFSCLASSEND
 	oc apply -f ${DEPLOYMENT_FILE}
 	oc apply -f ${CLASS_FILE}
 	[ "${SETASDEFAULTCLASS}" == Y ] && oc patch storageclass ${NFS_STORAGE_CLASS_NAME} -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
-
 }
 
 rollback-nfs-setup() {
@@ -171,7 +183,7 @@ rollback-nfs-setup() {
 	oc delete clusterrolebinding run-nfs-client-provisioner
 	oc delete role leader-locking-nfs-client-provisioner
 	oc delete rolebinding leader-locking-nfs-client-provisioner
-	rm -rf nfs-setup
+	rm -rf ${NFSSETUPDIR}
 }
 
 print-usage() {
