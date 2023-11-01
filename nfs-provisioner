@@ -250,7 +250,13 @@ spec:
         claimName: test-claim
 NFSTESTPODEND
 
-		[ "${NAMESPACE}" != "default" ] && oc new-project ${NAMESPACE}
+		[ "${NAMESPACE}" != "default" ] && oc new-project ${NAMESPACE} >/dev/null 2>&1
+		oc project ${NAMESPACE}
+		if [ $?  -ne 0 ]
+		then
+			echo "Could not set \"${NAMESPACE}\" as current project - exiting"
+			exit
+		fi
 		oc apply -f ${NFSSETUPDIR}/test-claim.yaml 
 		oc apply -f ${NFSSETUPDIR}/test-pod.yaml
 
@@ -267,6 +273,12 @@ NFSTESTPODEND
 		if [ -z "$3" ]
 		then
 			echo "Using [${NAMESPACE}] as namespace for tests"
+			oc project ${NAMESPACE}
+			if [ $?  -ne 0 ]
+			then
+				echo "Could not set \"${NAMESPACE}\" as current project - exiting"
+				exit
+			fi
 		else
 			NAMESPACE=$3
 		fi
