@@ -240,7 +240,7 @@ spec:
       - "/bin/sh"
     args:
       - "-c"
-      - whoami > /mnt/USERID
+      - "touch /mnt/SUCCESS && exit 0 || exit 1"
     volumeMounts:
       - name: nfs-pvc
         mountPath: "/mnt"
