@@ -4,10 +4,11 @@
 # https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner#manually
 
 # Config - user replaceable vars - adjust to suit your env
-NFS_SERVER=192.168.100.2
-NFS_PATH=/mnt/nfsworkershare
+NFS_SERVER=1.1.1.1
+NFS_PATH=/my/nfs/path
 NAMESPACE=nfs-provisioner # the script makes this default, so this is not necessarily used
 SETASDEFAULTCLASS=Y # Change to N so that this is not set as a default storage class. 
+OCCLIENT=/usr/bin/oc
 
 # Reference vars
 NFSSETUPDIR=nfs-provisioner-setup-dir # This is created to build the ancillary elements to the script
@@ -165,24 +166,24 @@ parameters:
   onDelete: delete
 NFSCLASSEND
 
-	oc new-project ${NAMESPACE} >/dev/null 2>&1
-	oc project ${NAMESPACE}
-	oc create -f ${RBAC_FILE}
-	oc adm policy add-scc-to-user hostmount-anyuid system:serviceaccount:$NAMESPACE:nfs-client-provisioner
-	oc apply -f ${DEPLOYMENT_FILE}
-	oc apply -f ${CLASS_FILE}
-	[ "${SETASDEFAULTCLASS}" == Y ] && oc patch storageclass ${NFS_STORAGE_CLASS_NAME} -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
+	${OCCLIENT} new-project ${NAMESPACE} >/dev/null 2>&1
+	${OCCLIENT} project ${NAMESPACE}
+	${OCCLIENT} create -f ${RBAC_FILE}
+	${OCCLIENT} adm policy add-scc-to-user hostmount-anyuid system:serviceaccount:$NAMESPACE:nfs-client-provisioner
+	${OCCLIENT} apply -f ${DEPLOYMENT_FILE}
+	${OCCLIENT} apply -f ${CLASS_FILE}
+	[ "${SETASDEFAULTCLASS}" == Y ] && ${OCCLIENT} patch storageclass ${NFS_STORAGE_CLASS_NAME} -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
 }
 
 rollback-nfs-setup() {
-	oc project ${NAMESPACE}
-	oc delete serviceaccount nfs-client-provisioner
-	oc delete deployment nfs-client-provisioner
-	oc delete sc ${NFS_STORAGE_CLASS_NAME}	
-	oc delete clusterrole nfs-client-provisioner-runner
-	oc delete clusterrolebinding run-nfs-client-provisioner
-	oc delete role leader-locking-nfs-client-provisioner
-	oc delete rolebinding leader-locking-nfs-client-provisioner
+	${OCCLIENT} project ${NAMESPACE}
+	${OCCLIENT} delete serviceaccount nfs-client-provisioner
+	${OCCLIENT} delete deployment nfs-client-provisioner
+	${OCCLIENT} delete sc ${NFS_STORAGE_CLASS_NAME}	
+	${OCCLIENT} delete clusterrole nfs-client-provisioner-runner
+	${OCCLIENT} delete clusterrolebinding run-nfs-client-provisioner
+	${OCCLIENT} delete role leader-locking-nfs-client-provisioner
+	${OCCLIENT} delete rolebinding leader-locking-nfs-client-provisioner
 	rm -rf ${NFSSETUPDIR}
 }
 
@@ -239,7 +240,7 @@ spec:
       - "/bin/sh"
     args:
       - "-c"
-      - "touch /mnt/SUCCESS && exit 0 || exit 1"
+      - whoami > /mnt/USERID
     volumeMounts:
       - name: nfs-pvc
         mountPath: "/mnt"
@@ -250,21 +251,21 @@ spec:
         claimName: test-claim
 NFSTESTPODEND
 
-		[ "${NAMESPACE}" != "default" ] && oc new-project ${NAMESPACE} >/dev/null 2>&1
-		oc project ${NAMESPACE}
+		[ "${NAMESPACE}" != "default" ] && ${OCCLIENT} new-project ${NAMESPACE} >/dev/null 2>&1
+		${OCCLIENT} project ${NAMESPACE}
 		if [ $?  -ne 0 ]
 		then
 			echo "Could not set \"${NAMESPACE}\" as current project - exiting"
 			exit
 		fi
-		oc apply -f ${NFSSETUPDIR}/test-claim.yaml 
-		oc apply -f ${NFSSETUPDIR}/test-pod.yaml
+		${OCCLIENT} apply -f ${NFSSETUPDIR}/test-claim.yaml 
+		${OCCLIENT} apply -f ${NFSSETUPDIR}/test-pod.yaml
 
 		echo
 		echo "NFS autoprovisioner test is now running - check the following:"
-		echo "- oc get pods (you should see test-claim-pod)"
-		echo "- oc get pv"
-		echo "- oc get pvc (test-claim should be bound to pv"
+		echo "- ${OCCLIENT} get pods (you should see test-claim-pod)"
+		echo "- ${OCCLIENT} get pv"
+		echo "- ${OCCLIENT} get pvc (test-claim should be bound to pv"
 		echo "- file SUCCESS created in $NFS_SERVER:${NFS_PATH}/${NAMESPACE}"
 		echo
 
@@ -273,7 +274,7 @@ NFSTESTPODEND
 		if [ -z "$3" ]
 		then
 			echo "Using [${NAMESPACE}] as namespace for tests"
-			oc project ${NAMESPACE}
+			${OCCLIENT} project ${NAMESPACE}
 			if [ $?  -ne 0 ]
 			then
 				echo "Could not set \"${NAMESPACE}\" as current project - exiting"
@@ -308,10 +309,10 @@ spec:
 NFSTESTPODDELEND
 
 		echo "NOTE: Project [${NAMESPACE}] will not be automatically deleted."
-		oc apply -f ${NFSSETUPDIR}/test-delete-pod.yaml
-		oc delete pod test-pod
-		oc delete pod test-delete-pod
-		oc delete pvc test-claim
+		${OCCLIENT} apply -f ${NFSSETUPDIR}/test-delete-pod.yaml
+		${OCCLIENT} delete pod test-pod
+		${OCCLIENT} delete pod test-delete-pod
+		${OCCLIENT} delete pvc test-claim
 	else
 		print-usage
 	fi
